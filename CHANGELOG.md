@@ -17,6 +17,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - **Worktree isolation no longer blocks the UI: its twelve git calls moved from `execFileSync` to `pi.exec`.** They ran synchronously on the TUI's event-loop thread with timeouts up to ten seconds, so a `git worktree add` on a large repo froze the whole interface — and workflows make that worse, since a parallel fan-out of worktree children turns one blocking call into several run back to back. `AgentManager.spawn()` keeps its synchronous signature and still returns an id immediately, which the tool, the scheduler and the cross-extension RPC all depend on; worktree creation moved instead into the async run path, behind a new `awaitStartup(id)` that resolves once the run is underway and rejects with the strict-isolation error `spawn()` used to throw. Failure handling is preserved on both paths: an immediate spawn drops the record so no orphan appears in `listAgents()`, while a queue-drained one records the error. The pool slot is now claimed before the awaited copy rather than after, or `drainQueue`'s synchronous loop would start every queued agent at once and `abort()` could not reach one mid-start. `pi.exec` reports a timeout as exit code 0 with `killed` set, so that flag is checked separately — the one failure that would otherwise read as success.
 
+## [0.17.1] - 2026-08-18
+
+### Fixed
+
+- **A `model`-mode mention now actually reaches the agent it starts.** The off-screen clone was built with an empty tool allowlist, which stripped its own `Agent` tool, so every start fell back to a direct spawn with a warning. Fixing that surfaced a second bug behind it: the clone spawned in the foreground, answering into a session disposed moments later, so the agent ran and reached nobody. Its spawn is now forced to the background.
+- **`@` offers files again.** Handle rows are merged into pi's own suggestion list instead of replacing it — the provider asked pi only when no agent matched, and prefix matching meant an empty token matched every handle, so a bare `@` listed no files at all.
+
 ## [0.17.0] - 2026-08-17
 
 > **⚠️ Note — an agent file's frontmatter `name:` now substitutes for the filename as its `subagent_type`.** Following Claude Code, the declared name is the dispatch identity and the filename is only the fallback, so `blubb.md` with `name: code-review` is spawned, mentioned and listed as `code-review`. Any value is accepted except one containing `:`, which Claude Code reserves for plugin scoping; such a file — like any unparseable one — is skipped with a warning rather than loaded under a name nothing honours, and `strictAgentFiles` turns that into a startup failure.
