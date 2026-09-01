@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   applyAndEmitLoaded,
   applySettings,
+  loadRequiredExtensionPaths,
   loadSettings,
   persistToastFor,
   type SettingsAppliers,
@@ -59,6 +60,23 @@ describe("settings persistence", () => {
     mkdirSync(join(projectDir, ".pi"), { recursive: true });
     writeFileSync(projectFile(), "also not json");
     expect(loadSettings(projectDir)).toEqual({});
+  });
+
+  it("fails closed when global required extension settings are malformed", () => {
+    writeFileSync(globalFile(), "not json {{");
+    expect(() => loadRequiredExtensionPaths()).toThrow("Cannot enforce required subagent extensions");
+    writeGlobal({ requiredExtensions: [""] });
+    expect(() => loadRequiredExtensionPaths()).toThrow("must contain non-empty strings");
+  });
+
+  it("keeps required extensions global-only", () => {
+    writeGlobal({ requiredExtensions: ["extensions/policy.ts", "~/shared-policy.ts"] });
+    writeProject({ requiredExtensions: ["./disable-policy.ts"] });
+    expect(loadSettings(projectDir)).not.toHaveProperty("requiredExtensions");
+    expect(loadRequiredExtensionPaths()).toEqual([
+      join(globalDir, "extensions/policy.ts"),
+      join(process.env.HOME!, "shared-policy.ts"),
+    ]);
   });
 
   it("loads from global when no project file", () => {

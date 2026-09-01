@@ -27,9 +27,17 @@ import type { ScheduledSubagent } from "../src/types.js";
 import { ctx, hermeticDir, makePi, textOf } from "./helpers/boot-extension.js";
 
 const SESSION_ID = "sched-wiring-session";
+const MODEL = { provider: "test", id: "model", name: "Model" };
+const OTHER_MODEL = { provider: "test", id: "other", name: "Other" };
 
 function bootedCtx() {
+  const models = [MODEL, OTHER_MODEL];
   return ctx({
+    model: MODEL,
+    modelRegistry: {
+      find: vi.fn((provider: string, id: string) => models.find(model => model.provider === provider && model.id === id)),
+      getAvailable: vi.fn(() => models),
+    },
     sessionManager: { getSessionId: vi.fn(() => SESSION_ID), getBranch: vi.fn(() => []) },
   });
 }
@@ -41,7 +49,11 @@ function bootedCtx() {
 async function scheduleAndReadBack(
   params: Record<string, unknown>,
 ): Promise<{ job: ScheduledSubagent; reply: string; restore: () => void }> {
-  const hermetic = hermeticDir();
+  const hermetic = hermeticDir({
+    agentFiles: params.agentFileModel ? {
+      scheduled: `---\nname: scheduled\ndescription: scheduled\nmodel: ${params.agentFileModel}\n---\nRun.\n`,
+    } : undefined,
+  });
   const { pi, tools, lifecycle } = makePi();
   subagentsExtension(pi);
 
@@ -79,6 +91,22 @@ describe("Agent tool → persisted scheduled job", () => {
       expect(job.isolation).toBe("worktree");
       expect(job.prompt).toBe("do the thing");
       expect(job.enabled).toBe(true);
+      expect(job.model).toBe("test/model");
+      expect(job.modelPolicyVersion).toBe(1);
+    } finally {
+      restore();
+    }
+  });
+
+  it("persists the frontmatter model instead of a conflicting caller model", async () => {
+    const { job, restore } = await scheduleAndReadBack({
+      subagent_type: "scheduled",
+      agentFileModel: "test/model",
+      model: "test/other",
+    });
+    try {
+      expect(job.model).toBe("test/model");
+      expect(job.modelPolicyVersion).toBe(1);
     } finally {
       restore();
     }

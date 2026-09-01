@@ -911,6 +911,58 @@ describe("AgentManager — isolation: worktree fails loud, no silent fallback", 
     expect(record.result).toContain("Changes saved to branch");
   });
 
+  it("surfaces worktree preservation failures and retained paths", async () => {
+    const { createWorktree, cleanupWorktree } = await import("../src/worktree.js");
+    const wt = { path: "/wt/recovery", branch: "pi-agent-recovery", baseSha: "abc", workPath: "/wt/recovery" };
+    vi.mocked(createWorktree).mockResolvedValueOnce(wt as never);
+    vi.mocked(cleanupWorktree).mockResolvedValueOnce({
+      hasChanges: true,
+      path: wt.path,
+      error: "commit failed",
+    });
+    resolvedRun();
+
+    manager = new AgentManager();
+    const id = manager.spawn(mockPi, mockCtx, "X", "go", {
+      description: "go", isBackground: true, isolation: "worktree",
+    });
+    await manager.awaitStartup(id);
+    await vi.waitFor(() => expect(manager.getRecord(id)!.status).toBe("error"));
+
+    const record = manager.getRecord(id)!;
+    expect(record.error).toContain("commit failed");
+    expect(record.error).toContain("Agent worktree remains at `/wt/recovery` for recovery.");
+    expect(record.result).toBe("done");
+  });
+
+  it("reports a retained worktree when stopped-during-copy cleanup fails", async () => {
+    const { createWorktree, cleanupWorktree } = await import("../src/worktree.js");
+    let releaseCopy!: () => void;
+    const wt = { path: "/wt/recovery", branch: "pi-agent-x", baseSha: "abc", workPath: "/wt/recovery" };
+    vi.mocked(createWorktree).mockImplementationOnce(
+      () => new Promise(resolve => { releaseCopy = () => resolve(wt); }),
+    );
+    vi.mocked(cleanupWorktree).mockResolvedValueOnce({
+      hasChanges: true,
+      path: wt.path,
+      error: "cleanup failed",
+    });
+    const completed: AgentRecord[] = [];
+    manager = new AgentManager(record => completed.push(record));
+    const id = manager.spawn(mockPi, mockCtx, "X", "stopped", {
+      description: "stopped", isBackground: true, isolation: "worktree",
+    });
+    expect(manager.abort(id)).toBe(true);
+
+    releaseCopy();
+    await expect(manager.awaitStartup(id)).rejects.toThrow("cleanup failed");
+
+    const record = manager.getRecord(id)!;
+    expect(record.status).toBe("error");
+    expect(record.error).toContain("Agent worktree remains at `/wt/recovery` for recovery.");
+    expect(completed).toContain(record);
+  });
+
   it("a stop that lands during the copy discards the worktree instead of running", async () => {
     // Window that did not exist when creation was synchronous: abort() can mark
     // the record stopped while the repo is still being copied.

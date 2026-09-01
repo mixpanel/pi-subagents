@@ -205,7 +205,12 @@ export interface AgentRecord {
   /** Worktree info if the agent is running in an isolated worktree. */
   worktree?: { path: string; branch: string; baseSha: string; workPath: string };
   /** Worktree cleanup result after agent completion. */
-  worktreeResult?: { hasChanges: boolean; branch?: string };
+  worktreeResult?: {
+    hasChanges: boolean;
+    branch?: string;
+    path?: string;
+    error?: string;
+  };
   /** The tool_use_id from the original Agent tool call. */
   toolCallId?: string;
   /** Path to the streaming output transcript file. */
@@ -353,7 +358,10 @@ export interface ScheduledSubagent {
   // spawn params (subset of Agent tool params; no inherit_context, no resume)
   subagent_type: SubagentType;
   prompt: string;
+  /** Canonical provider/model selected and scope-checked when the job was created. */
   model?: string;
+  /** Present on jobs created after schedule model policy became fail-closed. */
+  modelPolicyVersion?: 1;
   thinking?: ThinkingLevel;
   max_turns?: number;
   isolated?: boolean;

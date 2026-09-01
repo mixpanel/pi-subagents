@@ -83,8 +83,9 @@ Every failure reaches the caller as `{ success: false, error }`, where `error` i
 | `SpawnOptions.cwd must be an absolute path: "<value>"` | `src/agent-manager.ts:85` |
 | `SpawnOptions.cwd does not exist: "<cwd>"` | `src/agent-manager.ts:91` |
 | `SpawnOptions.cwd is not a directory: "<cwd>"` | `src/agent-manager.ts:94` |
-| `Cannot run with isolation: "worktree" — not a git repo, no commits yet, or 'git worktree add' failed.` | `src/agent-manager.ts:716-719`, surfaced through `awaitStartup` |
-| git plumbing failures | `src/worktree.ts:76` |
+| `Cannot run with isolation: "worktree" — not a git repo, no commits yet, or 'git worktree add' failed.` | `src/agent-manager.ts`, surfaced through `awaitStartup` |
+| `Worktree cleanup failed: <reason>` + retained recovery path | `src/agent-manager.ts`; the agent becomes an error instead of losing the worktree |
+| git plumbing failures | `src/worktree.ts` |
 | `Agent not found` | stop — `src/cross-extension-rpc.ts:170` |
 | `Agent is owned by another agent or workflow` | stop — `:178` |
 | `Agent is not running` | stop — `:182`. The record exists, so it has already settled |

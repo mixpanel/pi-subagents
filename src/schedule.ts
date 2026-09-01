@@ -15,6 +15,7 @@
  *     `subagent-notification` followUp path. No new delivery code.
  */
 
+import type { Model } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Cron } from "croner";
 import { nanoid } from "nanoid";
@@ -22,6 +23,7 @@ import type { AgentManager } from "./agent-manager.js";
 import { normalizeMaxTurns } from "./agent-runner.js";
 import { resolveSpawnType } from "./agent-types.js";
 import { resolveModel } from "./model-resolver.js";
+import { checkModelScope } from "./model-scope.js";
 import type { ScheduleStore } from "./schedule-store.js";
 import type { IsolationMode, ScheduledSubagent, SubagentType, ThinkingLevel } from "./types.js";
 
@@ -40,7 +42,9 @@ export interface NewJobInput {
   schedule: string;
   subagent_type: SubagentType;
   prompt: string;
-  model?: string;
+  /** Canonical provider/model selected and scope-checked by the Agent tool. */
+  model: string;
+  modelPolicyVersion: 1;
   thinking?: ThinkingLevel;
   max_turns?: number;
   isolated?: boolean;
@@ -104,6 +108,7 @@ export class SubagentScheduler {
       subagent_type: input.subagent_type,
       prompt: input.prompt,
       model: input.model,
+      modelPolicyVersion: input.modelPolicyVersion,
       thinking: input.thinking,
       max_turns: input.max_turns,
       isolated: input.isolated,
@@ -229,13 +234,28 @@ export class SubagentScheduler {
 
     store.update(id, { lastStatus: "running" });
 
-    // Resolve model at fire time — registry contents may have changed since the
-    // job was created (auth added/removed). Fall back silently to spawn-default
-    // if resolution fails; the spawn path handles undefined model gracefully.
-    let resolvedModel: any | undefined;
-    if (job.model) {
-      const r = resolveModel(job.model, ctx.modelRegistry);
-      if (typeof r !== "string") resolvedModel = r;
+    let resolvedModel: Model<any>;
+    try {
+      if (job.modelPolicyVersion !== 1 || !job.model) {
+        throw new Error(`Scheduled job "${job.name}" predates model policy enforcement. Delete and recreate it.`);
+      }
+      const resolution = resolveModel(job.model, ctx.modelRegistry);
+      if (typeof resolution === "string") throw new Error(resolution);
+      resolvedModel = resolution;
+      const scopeVerdict = checkModelScope({
+        model: resolvedModel,
+        cwd: ctx.cwd,
+        modelRegistry: ctx.modelRegistry,
+        callerSupplied: true,
+        agentLabel: job.name,
+        modelInput: job.model,
+      });
+      if (scopeVerdict.kind !== "ok") throw new Error(scopeVerdict.message);
+    } catch (err) {
+      const error = err instanceof Error ? err.message : String(err);
+      store.update(id, { lastRun: new Date().toISOString(), lastStatus: "error" });
+      this.emit({ type: "error", jobId: id, error });
+      return;
     }
 
     let agentId: string;

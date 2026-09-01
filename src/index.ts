@@ -1462,11 +1462,11 @@ export default function (pi: ExtensionAPI) {
   // With no per-result note by design, the model would have every reason to go
   // on reporting a `pi-agent-*` branch that was never created.
   const isolationGuideline = isWorktreeIsolationEnabled()
-    ? `\n- Use isolation: "worktree" to give the agent its own git worktree (safe parallel file modifications); leave it unset, or pass "off", for none. The worktree is removed when the agent finishes; if it made changes, they are committed to a branch and the branch is named in the result.`
+    ? `\n- Use isolation: "worktree" to give the agent its own git worktree (safe parallel file modifications); leave it unset, or pass "off", for none. The worktree is normally removed when the agent finishes and changes land on a named branch. If preservation fails, the worktree is kept and its recovery path is reported.`
     : "";
 
   const isolationCompactGuideline = isWorktreeIsolationEnabled()
-    ? `\n- isolation: "worktree" gives the agent its own git worktree (removed on completion); changes land on a branch named in the result.`
+    ? `\n- isolation: "worktree" uses a temporary git worktree. Changes land on a branch; a preservation failure keeps the worktree and reports its path.`
     : "";
 
   // Compact Agent tool description (#91, `toolDescriptionMode: "compact"`) —
@@ -1941,6 +1941,9 @@ Terse command-style prompts produce shallow, generic work.
         if (!scheduler.isActive()) {
           return textResult("Scheduler is not active in this session yet. Try again after the session has fully started.");
         }
+        if (!model) {
+          return textResult("Cannot schedule an agent without an available model.");
+        }
         try {
           const job = scheduler.addJob({
             name: params.description as string,
@@ -1950,7 +1953,8 @@ Terse command-style prompts produce shallow, generic work.
             // at fire time, and the original is what a user edits.
             subagent_type: requestedType,
             prompt: params.prompt as string,
-            model: params.model as string | undefined,
+            model: `${model.provider}/${model.id}`,
+            modelPolicyVersion: 1,
             thinking: thinking,
             max_turns: effectiveMaxTurns,
             isolated: isolated,

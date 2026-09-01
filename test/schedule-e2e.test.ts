@@ -33,7 +33,7 @@ function makeFaithfulManager(initialStatus = "completed") {
     spawn: vi.fn(function (this: any) {
       const id = "agent-" + Math.random().toString(36).slice(2, 10);
       let resolve!: () => void;
-      const promise = new Promise<string>(r => { resolve = () => r(""); });
+      const promise = new Promise<string>(resolvePromise => { resolve = () => resolvePromise(""); });
       records.set(id, { status: initialStatus, promise, resolve });
       // Auto-resolve on next tick — mimics a fast-finishing real agent.
       queueMicrotask(() => records.get(id)?.resolve());
@@ -50,10 +50,17 @@ function makePi() {
   return { events: { emit: vi.fn() } } as any;
 }
 
+const MODEL = { provider: "test", id: "model", name: "Model" };
+
 function makeCtx() {
   return {
     cwd: "/tmp",
-    modelRegistry: { find: vi.fn(), getAll: () => [], getAvailable: () => [] },
+    model: MODEL,
+    modelRegistry: {
+      find: vi.fn((provider: string, id: string) => provider === MODEL.provider && id === MODEL.id ? MODEL : undefined),
+      getAll: () => [MODEL],
+      getAvailable: () => [MODEL],
+    },
     sessionManager: { getSessionId: () => "sess-e2e" },
   } as any;
 }
@@ -99,6 +106,8 @@ describe("SubagentScheduler — end-to-end with real timers", () => {
       schedule: future,
       subagent_type: "general-purpose",
       prompt: "hello",
+      model: "test/model",
+      modelPolicyVersion: 1,
     });
     expect(job.scheduleType).toBe("once");
 
@@ -126,6 +135,8 @@ describe("SubagentScheduler — end-to-end with real timers", () => {
       schedule: future,
       subagent_type: "general-purpose",
       prompt: "fail",
+      model: "test/model",
+      modelPolicyVersion: 1,
     });
 
     await waitFor(() => manager.spawn.mock.calls.length === 1);
@@ -147,6 +158,8 @@ describe("SubagentScheduler — end-to-end with real timers", () => {
       schedule: "100s",  // Will be too long; override below.
       subagent_type: "general-purpose",
       prompt: "tick",
+      model: "test/model",
+      modelPolicyVersion: 1,
     });
     // Replace with a literal 100ms interval — easier than crafting a parseable shorthand for ms.
     // (parseInterval doesn't accept "ms"; we patch the persisted job and re-arm.)
@@ -218,6 +231,7 @@ describe("SubagentScheduler — end-to-end with real timers", () => {
     const job = scheduler.addJob({
       name: "events", description: "x", schedule: future,
       subagent_type: "general-purpose", prompt: "x",
+      model: "test/model", modelPolicyVersion: 1,
     });
 
     await waitFor(() => manager.spawn.mock.calls.length === 1);

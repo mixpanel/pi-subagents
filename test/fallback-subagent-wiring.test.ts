@@ -57,13 +57,18 @@ function writeAgents(): void {
   writeFileSync(join(dir, "retired.md"), "---\ndescription: Retired\ntools: read\nenabled: false\n---\nRetired.\n");
 }
 
+const MODEL = { provider: "test", id: "model", name: "Model" };
+
 function ctx() {
   return {
     hasUI: false,
     ui: { setStatus: vi.fn(), setWidget: vi.fn(), notify: vi.fn() },
     cwd,
-    model: undefined,
-    modelRegistry: { find: vi.fn(), getAvailable: vi.fn(() => []) },
+    model: MODEL,
+    modelRegistry: {
+      find: vi.fn((provider: string, id: string) => provider === MODEL.provider && id === MODEL.id ? MODEL : undefined),
+      getAvailable: vi.fn(() => [MODEL]),
+    },
     sessionManager: { getSessionId: vi.fn(() => "s1"), getBranch: vi.fn(() => []) },
     getSystemPrompt: vi.fn(() => "parent"),
   } as any;

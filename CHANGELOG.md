@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Global `requiredExtensions` policy handlers run in every child session.** The global-only list cannot be weakened by project or agent configuration, handlers remain active for isolated agents, their tools stay hidden, and load or bind failures stop the child.
+
+### Fixed
+- **Scheduled agents preserve and revalidate the effective model selected at creation.** Frontmatter precedence, availability, and `scopeModels` are enforced again when a job fires; legacy jobs must be recreated instead of silently falling back.
+- **Worktree preservation failures keep the worktree for recovery.** Git status, commit, or branch failures now surface the retained path instead of force-removing the only copy and reporting no changes.
+
 ## [0.19.0] - 2026-08-25
 
 > **⚠️ Breaking — this release requires pi 0.84.0 or newer** (`peerDependencies` moves from `>=0.81.0`). `SubagentWorkflow` needs two host APIs that do not exist below it, and both fail the typecheck rather than degrading quietly — see the `Changed` entry below for which, and why neither was worth reimplementing to hold the old floor. npm flags an older pi at install time.
