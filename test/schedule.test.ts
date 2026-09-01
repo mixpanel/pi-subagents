@@ -395,6 +395,17 @@ describe("SubagentScheduler — fire path", () => {
     expect(store.get(job.id)?.lastStatus).toBe("error");
   });
 
+  it("does not substitute a fuzzy match when the scheduled model becomes unavailable", () => {
+    const job = scheduler.addJob({
+      name: "unavailable", description: "x", schedule: "1s",
+      subagent_type: "general-purpose", prompt: "x",
+      model: "removed/test-model", modelPolicyVersion: 1,
+    });
+    vi.advanceTimersByTime(1_000);
+    expect(manager.spawn).not.toHaveBeenCalled();
+    expect(store.get(job.id)?.lastStatus).toBe("error");
+  });
+
   it("rechecks model scope when a job fires", () => {
     writeFileSync(join(process.env.PI_CODING_AGENT_DIR!, "settings.json"), JSON.stringify({ enabledModels: ["test/model"] }));
     const job = scheduler.addJob({

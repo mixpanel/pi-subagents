@@ -22,7 +22,6 @@ import { nanoid } from "nanoid";
 import type { AgentManager } from "./agent-manager.js";
 import { normalizeMaxTurns } from "./agent-runner.js";
 import { resolveSpawnType } from "./agent-types.js";
-import { resolveModel } from "./model-resolver.js";
 import { checkModelScope } from "./model-scope.js";
 import type { ScheduleStore } from "./schedule-store.js";
 import type { IsolationMode, ScheduledSubagent, SubagentType, ThinkingLevel } from "./types.js";
@@ -239,9 +238,12 @@ export class SubagentScheduler {
       if (job.modelPolicyVersion !== 1 || !job.model) {
         throw new Error(`Scheduled job "${job.name}" predates model policy enforcement. Delete and recreate it.`);
       }
-      const resolution = resolveModel(job.model, ctx.modelRegistry);
-      if (typeof resolution === "string") throw new Error(resolution);
-      resolvedModel = resolution;
+      const availableModels = ctx.modelRegistry.getAvailable();
+      const exactModel = availableModels.find(
+        model => `${model.provider}/${model.id}`.toLowerCase() === job.model!.toLowerCase(),
+      );
+      if (!exactModel) throw new Error(`Scheduled model is no longer available: "${job.model}".`);
+      resolvedModel = exactModel;
       const scopeVerdict = checkModelScope({
         model: resolvedModel,
         cwd: ctx.cwd,
