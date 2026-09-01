@@ -15,12 +15,14 @@
  *     `subagent-notification` followUp path. No new delivery code.
  */
 
+import type { Model } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Cron } from "croner";
 import { nanoid } from "nanoid";
 import type { AgentManager } from "./agent-manager.js";
+import { normalizeMaxTurns } from "./agent-runner.js";
 import { resolveSpawnType } from "./agent-types.js";
-import { resolveModel } from "./model-resolver.js";
+import { checkModelScope } from "./model-scope.js";
 import type { ScheduleStore } from "./schedule-store.js";
 import type { IsolationMode, ScheduledSubagent, SubagentType, ThinkingLevel } from "./types.js";
 
@@ -39,7 +41,9 @@ export interface NewJobInput {
   schedule: string;
   subagent_type: SubagentType;
   prompt: string;
-  model?: string;
+  /** Canonical provider/model selected and scope-checked by the Agent tool. */
+  model: string;
+  modelPolicyVersion: 1;
   thinking?: ThinkingLevel;
   max_turns?: number;
   isolated?: boolean;
@@ -103,6 +107,7 @@ export class SubagentScheduler {
       subagent_type: input.subagent_type,
       prompt: input.prompt,
       model: input.model,
+      modelPolicyVersion: input.modelPolicyVersion,
       thinking: input.thinking,
       max_turns: input.max_turns,
       isolated: input.isolated,
@@ -228,13 +233,31 @@ export class SubagentScheduler {
 
     store.update(id, { lastStatus: "running" });
 
-    // Resolve model at fire time — registry contents may have changed since the
-    // job was created (auth added/removed). Fall back silently to spawn-default
-    // if resolution fails; the spawn path handles undefined model gracefully.
-    let resolvedModel: any | undefined;
-    if (job.model) {
-      const r = resolveModel(job.model, ctx.modelRegistry);
-      if (typeof r !== "string") resolvedModel = r;
+    let resolvedModel: Model<any>;
+    try {
+      if (job.modelPolicyVersion !== 1 || !job.model) {
+        throw new Error(`Scheduled job "${job.name}" predates model policy enforcement. Delete and recreate it.`);
+      }
+      const availableModels = ctx.modelRegistry.getAvailable();
+      const exactModel = availableModels.find(
+        model => `${model.provider}/${model.id}`.toLowerCase() === job.model!.toLowerCase(),
+      );
+      if (!exactModel) throw new Error(`Scheduled model is no longer available: "${job.model}".`);
+      resolvedModel = exactModel;
+      const scopeVerdict = checkModelScope({
+        model: resolvedModel,
+        cwd: ctx.cwd,
+        modelRegistry: ctx.modelRegistry,
+        callerSupplied: true,
+        agentLabel: job.name,
+        modelInput: job.model,
+      });
+      if (scopeVerdict.kind !== "ok") throw new Error(scopeVerdict.message);
+    } catch (err) {
+      const error = err instanceof Error ? err.message : String(err);
+      store.update(id, { lastRun: new Date().toISOString(), lastStatus: "error" });
+      this.emit({ type: "error", jobId: id, error });
+      return;
     }
 
     let agentId: string;
@@ -256,6 +279,20 @@ export class SubagentScheduler {
         isolated: job.isolated,
         thinkingLevel: job.thinking,
         isolation: job.isolation,
+        // A scheduled run has no tool call to build this, so without it the
+        // conversation viewer shows nothing about how the job was configured.
+        // The model is left out on purpose: agent-manager fills in the effective
+        // one when the session reports it, and naming the pre-session pick here
+        // would only be right until then.
+        invocation: {
+          thinking: job.thinking,
+          // Normalized like the Agent tool's own snapshot: `0` means unlimited,
+          // and rendering it as "max turns: 0" would read as a limit of none.
+          maxTurns: normalizeMaxTurns(job.max_turns),
+          isolated: job.isolated,
+          runInBackground: true,
+          isolation: job.isolation,
+        },
       });
     } catch (err) {
       const error = err instanceof Error ? err.message : String(err);
@@ -266,7 +303,6 @@ export class SubagentScheduler {
 
     this.emit({ type: "fired", jobId: id, agentId, name: job.name });
 
-    const record = manager.getRecord(agentId);
     const finalize = (status: "success" | "error") => {
       const next = this.getNextRun(id);
       const current = store.get(id);
@@ -281,18 +317,16 @@ export class SubagentScheduler {
     // AgentManager's promise resolves either way (its .catch returns ""), so we
     // can't infer success/failure from the promise — read record.status instead.
     // Terminal states: completed/steered = success; error/aborted/stopped = error.
-    if (record?.promise) {
-      record.promise
-        .then(() => {
-          const r = manager.getRecord(agentId);
-          const failed = r?.status === "error" || r?.status === "aborted" || r?.status === "stopped";
-          finalize(failed ? "error" : "success");
-        })
-        .catch(() => finalize("error"));
-    } else {
-      // Spawn returned without a promise (defensive — bypassQueue path always sets one).
-      finalize("success");
-    }
+    // awaitStartup first: with isolation: "worktree" the run promise only exists
+    // once the repo copy is made, and a failed copy rejects here.
+    manager.awaitStartup(agentId)
+      .then(() => manager.getRecord(agentId)?.promise)
+      .then(() => {
+        const r = manager.getRecord(agentId);
+        const failed = r?.status === "error" || r?.status === "aborted" || r?.status === "stopped";
+        finalize(failed ? "error" : "success");
+      })
+      .catch(() => finalize("error"));
   }
 
   private emit(event: ScheduleChangeEvent): void {

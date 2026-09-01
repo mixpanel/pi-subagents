@@ -10,11 +10,12 @@
  *   - Concurrency-bypass option flows through to manager.spawn
  */
 
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { NO_FALLBACK, registerAgents, setFallbackSubagent } from "../src/agent-types.js";
+import { setScopeModelsEnabled } from "../src/model-scope.js";
 import { SubagentScheduler } from "../src/schedule.js";
 import { ScheduleStore } from "../src/schedule-store.js";
 
@@ -22,6 +23,7 @@ function makeMockManager() {
   const spawnFn = vi.fn(() => "agent-" + Math.random().toString(36).slice(2, 10));
   return {
     spawn: spawnFn,
+    awaitStartup: vi.fn(async () => {}),
     getRecord: vi.fn(() => ({ promise: Promise.resolve("done") })),
   } as any;
 }
@@ -32,10 +34,19 @@ function makeMockPi() {
   } as any;
 }
 
-function makeMockCtx() {
+const MODEL = { provider: "test", id: "model", name: "Model" };
+const OTHER_MODEL = { provider: "other", id: "model", name: "Other" };
+
+function makeMockCtx(cwd = "/tmp") {
+  const models = [MODEL, OTHER_MODEL];
   return {
-    cwd: "/tmp",
-    modelRegistry: { find: vi.fn(), getAll: () => [], getAvailable: () => [] },
+    cwd,
+    model: MODEL,
+    modelRegistry: {
+      find: vi.fn((provider: string, id: string) => models.find(model => model.provider === provider && model.id === id)),
+      getAll: () => models,
+      getAvailable: () => models,
+    },
     sessionManager: { getSessionId: () => "sess-1" },
   } as any;
 }
@@ -128,6 +139,8 @@ describe("SubagentScheduler — lifecycle", () => {
       schedule: "1h",
       subagent_type: "general-purpose",
       prompt: "hi",
+      model: "test/model",
+      modelPolicyVersion: 1,
     });
     expect(job.scheduleType).toBe("interval");
     expect(scheduler.list()).toHaveLength(1);
@@ -234,10 +247,14 @@ describe("SubagentScheduler — fire path", () => {
   let manager: any;
   let pi: any;
   let ctx: any;
+  let originalAgentDir: string | undefined;
 
   beforeEach(() => {
     vi.useFakeTimers();
     tmp = mkdtempSync(join(tmpdir(), "scheduler-fire-"));
+    originalAgentDir = process.env.PI_CODING_AGENT_DIR;
+    process.env.PI_CODING_AGENT_DIR = join(tmp, "agent");
+    mkdirSync(process.env.PI_CODING_AGENT_DIR, { recursive: true });
     store = new ScheduleStore(join(tmp, "s.json"));
     scheduler = new SubagentScheduler();
     manager = makeMockManager();
@@ -253,6 +270,9 @@ describe("SubagentScheduler — fire path", () => {
     // assertion can't leak strict dispatch into every test that follows.
     setFallbackSubagent(undefined);
     registerAgents(new Map());
+    setScopeModelsEnabled(false);
+    if (originalAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+    else process.env.PI_CODING_AGENT_DIR = originalAgentDir;
     rmSync(tmp, { recursive: true, force: true });
   });
 
@@ -260,6 +280,7 @@ describe("SubagentScheduler — fire path", () => {
     scheduler.addJob({
       name: "every-10s", description: "tick", schedule: "10s",
       subagent_type: "general-purpose", prompt: "tick",
+      model: "test/model", modelPolicyVersion: 1,
     });
 
     expect(manager.spawn).toHaveBeenCalledTimes(0);
@@ -277,6 +298,7 @@ describe("SubagentScheduler — fire path", () => {
     const job = scheduler.addJob({
       name: "gone", description: "vanished agent", schedule: "+1s",
       subagent_type: "deleted-since", prompt: "run",
+      model: "test/model", modelPolicyVersion: 1,
     });
 
     vi.advanceTimersByTime(2_000);
@@ -299,6 +321,7 @@ describe("SubagentScheduler — fire path", () => {
     const job = scheduler.addJob({
       name: "soon", description: "once", schedule: "+1s",
       subagent_type: "general-purpose", prompt: "once",
+      model: "test/model", modelPolicyVersion: 1,
     });
 
     vi.advanceTimersByTime(2_000);
@@ -316,6 +339,7 @@ describe("SubagentScheduler — fire path", () => {
     scheduler.addJob({
       name: "every-1s", description: "x", schedule: "1s",
       subagent_type: "general-purpose", prompt: "x",
+      model: "test/model", modelPolicyVersion: 1,
     });
 
     vi.advanceTimersByTime(1_000);
@@ -323,6 +347,76 @@ describe("SubagentScheduler — fire path", () => {
     const optsArg = manager.spawn.mock.calls[0][4];
     expect(optsArg.bypassQueue).toBe(true);
     expect(optsArg.isBackground).toBe(true);
+  });
+
+  it("fire passes the job's configuration as the invocation snapshot", () => {
+    // A scheduled run has no tool call to build one, so without this the
+    // conversation viewer can say nothing about how the job was configured.
+    // The model is left out on purpose: agent-manager fills in the effective one
+    // once the session reports it.
+    scheduler.addJob({
+      name: "every-1s", description: "x", schedule: "1s",
+      subagent_type: "general-purpose", prompt: "x",
+      thinking: "high", max_turns: 12, isolated: true,
+      model: "test/model", modelPolicyVersion: 1,
+    });
+
+    vi.advanceTimersByTime(1_000);
+    const optsArg = manager.spawn.mock.calls[0][4];
+    expect(optsArg.invocation).toEqual({
+      thinking: "high",
+      maxTurns: 12,
+      isolated: true,
+      runInBackground: true,
+      isolation: undefined,
+    });
+  });
+
+  it("fire normalizes an unlimited turn budget out of the snapshot", () => {
+    // 0 means unlimited; "max turns: 0" would read as a limit of none.
+    scheduler.addJob({
+      name: "unlimited", description: "x", schedule: "1s",
+      subagent_type: "general-purpose", prompt: "x", max_turns: 0,
+      model: "test/model", modelPolicyVersion: 1,
+    });
+
+    vi.advanceTimersByTime(1_000);
+    expect(manager.spawn.mock.calls[0][4].invocation.maxTurns).toBeUndefined();
+  });
+
+  it("rejects a legacy job that was not created under model policy enforcement", () => {
+    const job = scheduler.addJob({
+      name: "legacy", description: "x", schedule: "1s",
+      subagent_type: "general-purpose", prompt: "x",
+    });
+    store.update(job.id, { modelPolicyVersion: undefined });
+    vi.advanceTimersByTime(1_000);
+    expect(manager.spawn).not.toHaveBeenCalled();
+    expect(store.get(job.id)?.lastStatus).toBe("error");
+  });
+
+  it("does not substitute a fuzzy match when the scheduled model becomes unavailable", () => {
+    const job = scheduler.addJob({
+      name: "unavailable", description: "x", schedule: "1s",
+      subagent_type: "general-purpose", prompt: "x",
+      model: "removed/test-model", modelPolicyVersion: 1,
+    });
+    vi.advanceTimersByTime(1_000);
+    expect(manager.spawn).not.toHaveBeenCalled();
+    expect(store.get(job.id)?.lastStatus).toBe("error");
+  });
+
+  it("rechecks model scope when a job fires", () => {
+    writeFileSync(join(process.env.PI_CODING_AGENT_DIR!, "settings.json"), JSON.stringify({ enabledModels: ["test/model"] }));
+    const job = scheduler.addJob({
+      name: "scope-change", description: "x", schedule: "1s",
+      subagent_type: "general-purpose", prompt: "x",
+    });
+    setScopeModelsEnabled(true);
+    writeFileSync(join(process.env.PI_CODING_AGENT_DIR!, "settings.json"), JSON.stringify({ enabledModels: ["other/model"] }));
+    vi.advanceTimersByTime(1_000);
+    expect(manager.spawn).not.toHaveBeenCalled();
+    expect(store.get(job.id)?.lastStatus).toBe("error");
   });
 
   it("disabled jobs do not fire", () => {
@@ -339,6 +433,7 @@ describe("SubagentScheduler — fire path", () => {
     scheduler.addJob({
       name: "fire-once", description: "x", schedule: "+1s",
       subagent_type: "general-purpose", prompt: "x",
+      model: "test/model", modelPolicyVersion: 1,
     });
     vi.advanceTimersByTime(2_000);
     expect(pi.events.emit).toHaveBeenCalledWith("subagents:scheduled", expect.objectContaining({
@@ -351,6 +446,7 @@ describe("SubagentScheduler — fire path", () => {
     const job = scheduler.addJob({
       name: "boom", description: "x", schedule: "+1s",
       subagent_type: "general-purpose", prompt: "x",
+      model: "test/model", modelPolicyVersion: 1,
     });
     vi.advanceTimersByTime(2_000);
 
@@ -359,6 +455,22 @@ describe("SubagentScheduler — fire path", () => {
     expect(pi.events.emit).toHaveBeenCalledWith("subagents:scheduled", expect.objectContaining({
       type: "error", jobId: job.id, error: "no slots",
     }));
+  });
+
+  it("records lastStatus error when the agent fails to start after spawn returns", async () => {
+    // Under isolation: "worktree" the agent is not running when spawn() returns
+    // — the repo copy is awaited. A failure there must be recorded as a failed
+    // run, not as the success the missing run promise would otherwise imply.
+    manager.awaitStartup.mockRejectedValueOnce(new Error('Cannot run with isolation: "worktree"'));
+    const job = scheduler.addJob({
+      name: "no-worktree", description: "x", schedule: "+1s",
+      subagent_type: "general-purpose", prompt: "x", isolation: "worktree",
+      model: "test/model", modelPolicyVersion: 1,
+    });
+    vi.advanceTimersByTime(2_000);
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(scheduler.list().find(j => j.id === job.id)?.lastStatus).toBe("error");
   });
 
   // ── Status reflection from record.status (regression for bug #1) ────
@@ -386,6 +498,7 @@ describe("SubagentScheduler — fire path", () => {
       const job = scheduler.addJob({
         name: "fail-job", description: "x", schedule: "+1s",
         subagent_type: "general-purpose", prompt: "x",
+        model: "test/model", modelPolicyVersion: 1,
       });
 
       vi.advanceTimersByTime(2_000);
@@ -407,6 +520,7 @@ describe("SubagentScheduler — fire path", () => {
       const job = scheduler.addJob({
         name: "ok-job", description: "x", schedule: "+1s",
         subagent_type: "general-purpose", prompt: "x",
+        model: "test/model", modelPolicyVersion: 1,
       });
 
       vi.advanceTimersByTime(2_000);
@@ -424,10 +538,12 @@ describe("SubagentScheduler — fire path", () => {
       const a = scheduler.addJob({
         name: "abort-job", description: "x", schedule: "+1s",
         subagent_type: "general-purpose", prompt: "x",
+        model: "test/model", modelPolicyVersion: 1,
       });
       const b = scheduler.addJob({
         name: "stop-job", description: "x", schedule: "+2s",
         subagent_type: "general-purpose", prompt: "x",
+        model: "test/model", modelPolicyVersion: 1,
       });
 
       vi.advanceTimersByTime(3_000);
