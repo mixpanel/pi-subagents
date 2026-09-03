@@ -27,7 +27,9 @@ export function describeModel(
   model: { provider: string; id: string; name?: string },
 ): { modelName: string; modelId: string } {
   return {
-    modelName: (model.name ?? model.id).replace(/^Claude\s+/i, "").toLowerCase(),
+    // The id, not `model.name`: display names carry model-picker trait
+    // annotations that read as noise on a one-line row.
+    modelName: model.id,
     modelId: `${model.provider}/${model.id}`,
   };
 }
