@@ -139,9 +139,9 @@ describe("Agent tool result — effective model", () => {
       ctx(),
     );
 
-    expect(result.details.modelName).toBe("opus 4.6");
-    expect(render(tool, result)).toContain("opus 4.6");
-    expect(render(tool, result, true)).toContain("opus 4.6");
+    expect(result.details.modelName).toBe("claude-opus-4-6");
+    expect(render(tool, result)).toContain("claude-opus-4-6");
+    expect(render(tool, result, true)).toContain("claude-opus-4-6");
   });
 
   it("names the inherited model while streaming, before a session exists", async () => {
@@ -166,9 +166,9 @@ describe("Agent tool result — effective model", () => {
     );
 
     const streamed = onUpdate.mock.calls[0][0];
-    expect(streamed.details.modelName).toBe("opus 4.6");
+    expect(streamed.details.modelName).toBe("claude-opus-4-6");
     expect(tool.renderResult(streamed, { expanded: false, isPartial: true }, theme, { isError: false })
-      .render(200).join("\n")).toContain("opus 4.6");
+      .render(200).join("\n")).toContain("claude-opus-4-6");
   });
 
   it("keeps the twin label beside the model", async () => {
@@ -251,13 +251,13 @@ describe("Agent tool result — effective model", () => {
       ctx(),
     );
 
-    expect(result.details.modelName).toBe("haiku 4.5 (asked anthropic/claude-opus-4-6)");
+    expect(result.details.modelName).toBe("claude-haiku-4-5 (asked anthropic/claude-opus-4-6)");
   });
 
   it("stays quiet when the caller's spelling names the model that won", async () => {
     // Model input is fuzzy: `"haiku"` and `"anthropic/claude-haiku-4-5"` are the
     // same model, and the frontmatter did not take anything away from the
-    // caller. Comparing the raw strings would print "haiku 4.5 (asked haiku)".
+    // caller. Comparing the raw strings would print "claude-haiku-4-5 (asked haiku)".
     pinnedAgent("model: anthropic/claude-haiku-4-5\n");
     const tool = agentTool();
     vi.mocked(runAgent).mockImplementation(() => new Promise(() => {}) as never);
@@ -270,7 +270,7 @@ describe("Agent tool result — effective model", () => {
       ctx(),
     );
 
-    expect(result.details.modelName).toBe("haiku 4.5");
+    expect(result.details.modelName).toBe("claude-haiku-4-5");
   });
 
   it("discloses a spelling that names no available model at all", async () => {
@@ -286,7 +286,7 @@ describe("Agent tool result — effective model", () => {
       ctx(),
     );
 
-    expect(result.details.modelName).toBe("haiku 4.5 (asked gpt-9)");
+    expect(result.details.modelName).toBe("claude-haiku-4-5 (asked gpt-9)");
   });
 
   it("says nothing about a request that was honored", async () => {
@@ -348,8 +348,8 @@ describe("Agent tool result — resume", () => {
       context,
     );
 
-    expect(resumed.details.modelName).toBe("haiku 4.5");
+    expect(resumed.details.modelName).toBe("claude-haiku-4-5");
     expect(resumed.details.tags).toContain("thinking: low");
-    expect(render(tool, resumed)).not.toContain("opus 4.6");
+    expect(render(tool, resumed)).not.toContain("claude-opus-4-6");
   });
 });

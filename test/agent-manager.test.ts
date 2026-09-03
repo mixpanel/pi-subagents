@@ -2485,7 +2485,7 @@ describe("AgentManager — effective model and thinking write-back", () => {
     );
 
     expect(record.invocation).toMatchObject({
-      modelName: "sonnet 4.6",
+      modelName: "claude-sonnet-4-6",
       modelId: "anthropic/claude-sonnet-4-6",
       thinking: "high",
     });

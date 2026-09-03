@@ -259,12 +259,12 @@ describe("resolveModel", () => {
 });
 
 describe("describeModel", () => {
-  it("gives a short label and a canonical id", () => {
+  it("labels with the id, not the display name", () => {
     expect(describeModel({ provider: "anthropic", id: "claude-sonnet-4-6", name: "Claude Sonnet 4.6" }))
-      .toEqual({ modelName: "sonnet 4.6", modelId: "anthropic/claude-sonnet-4-6" });
+      .toEqual({ modelName: "claude-sonnet-4-6", modelId: "anthropic/claude-sonnet-4-6" });
   });
 
-  it("falls back to the id when the model has no display name", () => {
+  it("labels a model that has no display name", () => {
     expect(describeModel({ provider: "openai-codex", id: "gpt-5.6-sol" }))
       .toEqual({ modelName: "gpt-5.6-sol", modelId: "openai-codex/gpt-5.6-sol" });
   });
