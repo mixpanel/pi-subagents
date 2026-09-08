@@ -39,10 +39,11 @@ export const DEFAULT_AGENTS: Map<string, AgentConfig> = new Map([
       // the same model under another provider if the named one doesn't expose it.
       // gemini-3.8-flash over claude-haiku-4-5: 5x the context window (1M vs 200K),
       // 8x max output (65K vs 8K), cheaper per token, and every model we serve.
-      // NOTE: if the model ever fails to resolve, resolution silently falls back
-      // to the parent session model (see resolveModel callers in index.ts) —
+      // Qualified with our "litellm" provider so resolution takes the exact-match
+      // path. NOTE: if the model ever fails to resolve, resolution silently falls
+      // back to the parent session model (see resolveModel callers in index.ts) —
       // don't pin a model the proxy doesn't serve.
-      model: "gemini-3.8-flash",
+      model: "litellm/gemini-3.8-flash",
       systemPrompt: `# CRITICAL: READ-ONLY MODE - NO FILE MODIFICATIONS
 You are a file search specialist. You excel at thoroughly navigating and exploring codebases.
 Your role is EXCLUSIVELY to search and analyze existing code. You do NOT have access to file editing tools.
