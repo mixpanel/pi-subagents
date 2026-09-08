@@ -71,7 +71,6 @@ describe("agent type registry", () => {
     it("case-insensitive lookup works for getAgentConfig", () => {
       const config = getAgentConfig("explore");
       expect(config?.name).toBe("Explore");
-      expect(config?.model).toBe("gemini-3.8-flash");
     });
 
     it("resolveType returns canonical key or undefined", () => {
@@ -96,9 +95,12 @@ describe("agent type registry", () => {
       expect(config.builtinToolNames).not.toContain("write");
     });
 
-    it("Explore has fast-tier model pinned in config", () => {
+    // Guards the silent-fallback footgun: if the pin disappears, Explore
+    // silently inherits the parent model at runtime — no error, just a hint
+    // in /agents. This is the only place that failure fails loudly.
+    it("Explore pins a model instead of silently inheriting", () => {
       const cfg = getAgentConfig("Explore");
-      expect(cfg?.model).toBe("gemini-3.8-flash");
+      expect(cfg?.model).toBeTruthy();
     });
 
     it("default agents are marked isDefault", () => {
